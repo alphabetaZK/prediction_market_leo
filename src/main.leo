@@ -1,5 +1,5 @@
 // Aleo Anonymous Prediction Market Platform
-// Team: Ramzy, Samy, Mathieu, Lina, Abdellahi
+// Team: Ramzy, Salim, Mathieu, Lina, Abdellahi
 
 program prediction_market.aleo {
     // Constants
