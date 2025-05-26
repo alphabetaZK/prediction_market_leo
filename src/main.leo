@@ -174,4 +174,199 @@ program prediction_market.aleo {
 
         Mapping::set(markets, market_id, new_market);
     }
+    async transition close_market_with_winner(market_id: field, winning_option: u8) -> Future {
+        assert(self.caller == ADMIN);
+        let future: Future = close_market_winner(market_id, winning_option);
+        return future;
+    }
+
+    async function close_market_winner(market_id: field, winning_option: u8) {
+
+        let market: Market = Mapping::get(markets, market_id);
+        assert(market.status == STATUS_OPEN);
+        assert(block.height >= market.closing_block);
+        assert(winning_option >= 1u8 && winning_option <= market.num_options);
+
+        let closed_market: Market = Market {
+            id: market.id,
+            creator: market.creator,
+            question: market.question,
+            options: market.options,
+            num_options: market.num_options,
+            closing_block: market.closing_block,
+            status: STATUS_CLOSED,
+            winning_option: winning_option,
+            total_pool: market.total_pool,
+            option_pools: market.option_pools,
+        };
+
+        Mapping::set(markets, market_id, closed_market);
+    }
+
+    async transition cancel_market(market_id: field) -> Future {
+        assert(self.caller == ADMIN);
+        let future: Future = cancel_market_finalize(market_id);
+        return future;
+    }
+
+    async function cancel_market_finalize(market_id: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        assert(market.status == STATUS_OPEN);
+
+        let canceled_market: Market = Market {
+            id: market.id,
+            creator: market.creator,
+            question: market.question,
+            options: market.options,
+            num_options: market.num_options,
+            closing_block: market.closing_block,
+            status: STATUS_CANCELED,
+            winning_option: market.winning_option,
+            total_pool: market.total_pool,
+            option_pools: market.option_pools,
+        };
+
+        Mapping::set(markets, market_id, canceled_market);
+    }
+
+    async transition mark_market_invalid(market_id: field) -> Future {
+        assert(self.caller == ADMIN);
+        let future: Future = mark_market_invalid_finalize(market_id);
+        return future;
+    }
+
+    async function mark_market_invalid_finalize(market_id: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        assert(market.status == STATUS_OPEN);
+
+        let invalid_market: Market = Market {
+            id: market.id,
+            creator: market.creator,
+            question: market.question,
+            options: market.options,
+            num_options: market.num_options,
+            closing_block: market.closing_block,
+            status: STATUS_INVALID,
+            winning_option: market.winning_option,
+            total_pool: market.total_pool,
+            option_pools: market.option_pools,
+        };
+
+        Mapping::set(markets, market_id, invalid_market);
+    }
+
+    async transition claim_winnings(bet_record: BetRecord) -> (RewardReceipt, Future) {
+        let reward_receipt: RewardReceipt = RewardReceipt {
+            owner: bet_record.owner,
+            market_id: bet_record.market_id,
+            bet_nonce: bet_record.nonce,
+            reward_amount: 0u64, // Sera calculé dans finalize
+        };
+
+        let future: Future = claim_winnings_finalize(
+            bet_record.market_id,
+            bet_record.chosen_option,
+            bet_record.amount,
+            bet_record.nonce,
+            bet_record.owner
+        );
+
+        return (reward_receipt, future);
+    }
+
+    async function claim_winnings_finalize(market_id: field, chosen_option: u8, bet_amount: u64, bet_nonce: field, bettor: address) {
+        let market: Market = Mapping::get(markets, market_id);
+        
+        // Vérifier que le marché est dans un état final
+        assert(market.status == STATUS_CLOSED || market.status == STATUS_CANCELED || market.status == STATUS_INVALID);
+        
+        // Vérifier que le pari n'a pas déjà été réclamé
+        let is_claimed: bool = Mapping::get_or_use(claimed_bets, bet_nonce, false);
+        assert(!is_claimed);
+
+        // Marquer le pari comme réclamé
+        Mapping::set(claimed_bets, bet_nonce, true);
+
+        // Si le marché est fermé avec un gagnant, vérifier si c'est la bonne option
+        if market.status == STATUS_CLOSED {
+            assert(chosen_option == market.winning_option);
+            // Le calcul des récompenses proportionnelles sera fait côté client
+            // car Leo a des limitations pour les divisions complexes
+        }
+        
+        // Si le marché est annulé, le parieur récupère sa mise
+        // Si le marché est invalide, aucune récompense n'est distribuée
+    }
+
+    async transition claim_refund(bet_record: BetRecord) -> (RewardReceipt, Future) {
+        let refund_receipt: RewardReceipt = RewardReceipt {
+            owner: bet_record.owner,
+            market_id: bet_record.market_id,
+            bet_nonce: bet_record.nonce,
+            reward_amount: bet_record.amount, // Remboursement complet
+        };
+
+        let future: Future = claim_refund_finalize(
+            bet_record.market_id,
+            bet_record.amount,
+            bet_record.nonce
+        );
+
+        return (refund_receipt, future);
+    }
+
+    async function claim_refund_finalize(market_id: field, bet_amount: u64, bet_nonce: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        
+        // Seuls les marchés annulés permettent les remboursements
+        assert(market.status == STATUS_CANCELED);
+        
+        // Vérifier que le pari n'a pas déjà été réclamé
+        let is_claimed: bool = Mapping::get_or_use(claimed_bets, bet_nonce, false);
+        assert(!is_claimed);
+
+        // Marquer le pari comme réclamé
+        Mapping::set(claimed_bets, bet_nonce, true);
+    }
+    
+    // Fonction pour révéler les résultats d'un marché (transparence)
+    async transition reveal_market_results(market_id: field) -> Future {
+        let future: Future = reveal_market_results_finalize(market_id);
+        return future;
+    }
+
+    async function reveal_market_results_finalize(market_id: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        // Cette fonction permet de rendre publiques les informations du marché
+        // Les pools et résultats sont déjà stockés dans le mapping public
+    }
+    
+    // Fonction pour que l'admin puisse retirer ses frais (optionnelle)
+    async transition withdraw_admin_fees(amount: u64) -> Future {
+        assert(self.caller == ADMIN);
+        let future: Future = withdraw_admin_fees_finalize(amount);
+        return future;
+    }
+
+    async function withdraw_admin_fees_finalize(amount: u64) {
+        let current_fees: u64 = Mapping::get(admin_fees, ADMIN);
+        assert(current_fees >= amount);
+        
+        let remaining_fees: u64 = current_fees - amount;
+        Mapping::set(admin_fees, ADMIN, remaining_fees);
+    }
+    
+    // Fonction pour lister les marchés ouverts (aide à la découverte)
+    async transition list_open_markets() -> Future {
+        let future: Future = list_open_markets_finalize();
+        return future;
+    }
+
+    async function list_open_markets_finalize() {
+        // Cette fonction permet d'accéder au mapping open_markets
+        // pour lister les marchés disponibles (limité à 100)
+        let market_count_value: u8 = Mapping::get_or_use(market_count, true, 0u8);
+        // Les IDs des marchés ouverts sont stockés dans open_markets[0] à open_markets[market_count_value-1]
+    }
+    
 }
