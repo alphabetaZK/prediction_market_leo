@@ -73,7 +73,7 @@ program prediction_market.aleo {
         let duration_secs: u32 = duration_days * SECONDS_PER_DAY;
     
         let market_receipt: MarketReceipt = MarketReceipt {
-            owner: self.caller,
+            owner: self.signer,  // ✅ CORRIGÉ : self.signer au lieu de self.caller
             market_id: market_id,
             creation_fee_paid: CREATION_FEE,
         };
@@ -84,7 +84,7 @@ program prediction_market.aleo {
             option_hashes, 
             num_options, 
             duration_secs, 
-            self.caller
+            self.signer  // ✅ CORRIGÉ : self.signer pour le créateur aussi
         );
         
         return (market_receipt, future);
@@ -127,7 +127,7 @@ program prediction_market.aleo {
         assert(chosen_option <= MAX_OPTIONS);
 
         let bet_record: BetRecord = BetRecord {
-            owner: self.caller,
+            owner: self.signer,  // ✅ CORRIGÉ : self.signer au lieu de self.caller
             market_id: market_id,
             chosen_option: chosen_option,
             amount: bet_amount,
@@ -174,14 +174,14 @@ program prediction_market.aleo {
 
         Mapping::set(markets, market_id, new_market);
     }
+
     async transition close_market_with_winner(market_id: field, winning_option: u8) -> Future {
-        assert(self.caller == ADMIN);
+        assert(self.caller == ADMIN);  // ✅ OK : self.caller pour la vérification admin
         let future: Future = close_market_winner(market_id, winning_option);
         return future;
     }
 
     async function close_market_winner(market_id: field, winning_option: u8) {
-
         let market: Market = Mapping::get(markets, market_id);
         assert(market.status == STATUS_OPEN);
         assert(block.height >= market.closing_block);
@@ -204,7 +204,7 @@ program prediction_market.aleo {
     }
 
     async transition cancel_market(market_id: field) -> Future {
-        assert(self.caller == ADMIN);
+        assert(self.caller == ADMIN);  // ✅ OK : self.caller pour la vérification admin
         let future: Future = cancel_market_finalize(market_id);
         return future;
     }
@@ -230,7 +230,7 @@ program prediction_market.aleo {
     }
 
     async transition mark_market_invalid(market_id: field) -> Future {
-        assert(self.caller == ADMIN);
+        assert(self.caller == ADMIN);  // ✅ OK : self.caller pour la vérification admin
         let future: Future = mark_market_invalid_finalize(market_id);
         return future;
     }
@@ -343,7 +343,7 @@ program prediction_market.aleo {
     
     // Fonction pour que l'admin puisse retirer ses frais (optionnelle)
     async transition withdraw_admin_fees(amount: u64) -> Future {
-        assert(self.caller == ADMIN);
+        assert(self.caller == ADMIN);  // ✅ OK : self.caller pour la vérification admin
         let future: Future = withdraw_admin_fees_finalize(amount);
         return future;
     }
@@ -368,5 +368,4 @@ program prediction_market.aleo {
         let market_count_value: u8 = Mapping::get_or_use(market_count, true, 0u8);
         // Les IDs des marchés ouverts sont stockés dans open_markets[0] à open_markets[market_count_value-1]
     }
-    
 }
