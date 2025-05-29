@@ -81,7 +81,7 @@ finalize create_market:
     input r4 as u32.public;
     input r5 as address.public;
     add block.height r4 into r6;
-    cast 0u64 0u64 0u64 0u64 0u64 into r7 as [u64; 5u32];
+    cast  0u64 0u64 0u64 0u64 0u64 into r7 as [u64; 5u32];
     cast r0 r5 r1 r2 r3 r6 0u8 0u8 0u64 r7 into r8 as Market;
     set r8 into markets[r0];
     get.or_use admin_fees[aleo12l0r3y89h30ts35d68mzf0ak35zepxw58gns2t4607a8a3jy65qs9gxuuj] 0u64 into r9;
@@ -140,7 +140,7 @@ finalize place_bet:
     add r3.option_pools[4u32] r2 into r20;
     ternary r11 r20 r3.option_pools[4u32] into r21;
     add r3.total_pool r2 into r22;
-    cast r13 r15 r17 r19 r21 into r23 as [u64; 5u32];
+    cast  r13 r15 r17 r19 r21 into r23 as [u64; 5u32];
     cast r3.id r3.creator r3.question r3.options r3.num_options r3.closing_block r3.status r3.winning_option r22 r23 into r24 as Market;
     set r24 into markets[r0];
 
