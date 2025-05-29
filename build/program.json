@@ -1,6 +1,8 @@
 {
-    "program": "prediction_market.aleo",
-    "version": "0.0.0",
-    "description": "",
-    "license": "MIT"
+  "program": "prediction_market.aleo",
+  "version": "0.1.0",
+  "description": "",
+  "license": "",
+  "dependencies": null,
+  "dev_dependencies": null
 }

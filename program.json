@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "description": "A private prediction market using zero-knowledge proofs",
   "license": "MIT",
-  "dependencies": null,
+  "dependencies": [
+    {
+      "name": "prediction_market.aleo",
+      "location": "local",
+      "network": null,
+      "path": "..\\..\\"
+    }
+  ],
   "dev_dependencies": null
 }

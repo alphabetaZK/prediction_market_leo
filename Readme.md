@@ -1,7 +1,5 @@
 ## Leo market prediction testing branch
 
-
-
 # Constantes
 
 | Nom                               | Type      | Sens                                                              |

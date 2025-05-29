@@ -1,7 +1,14 @@
 {
   "program": "prediction_market_test.aleo",
   "version": "0.1.0",
-  "description": "",
   "license": "MIT",
-  "dependencies": null
+  "description": "Unit-tests for prediction_market.aleo",
+
+  "dependencies": [
+    {
+      "name": "prediction_market.aleo",
+      "location": "local",
+      "path": "../../"
+    }
+  ]
 }
