@@ -28,7 +28,7 @@ Current prediction markets (e.g., Polymarket, Augur) lack **privacy by default**
 
 ## 🏗️ Project Structure
 
-\`\`\`
+```
 prediction_market_leo/
 ├── src/
 │   └── main.leo               # Main Leo contract logic
@@ -36,7 +36,7 @@ prediction_market_leo/
 ├── inputs/                    # Input files for testing
 ├── README.md                  # This file
 └── .aleo/                     # Aleo deployment metadata
-\`\`\`
+```
 
 ## 📦 Features
 
@@ -53,9 +53,9 @@ prediction_market_leo/
 ### `initialize_amm_market`
 Creates a new prediction market and mints `YES` / `NO` tokens.
 
-\`\`\`leo
+```leo
 async transition initialize_amm_market(...)
-\`\`\`
+```
 
 ### `finalize_initialize_amm_market`
 Registers the market with metadata (question hash, options, deadlines).
@@ -76,22 +76,22 @@ User proves their bet and claims their reward with a ZK-proof.
 - [Install Aleo tooling](https://developer.aleo.org/aleo/getting-started/installation)
 - Clone the repo:
 
-\`\`\`bash
+```bash
 git clone https://github.com/alphabetaZK/prediction_market_leo
 cd prediction_market_leo
-\`\`\`
+```
 
 ### Build the Leo Program
 
-\`\`\`bash
+```bash
 leo build
-\`\`\`
+```
 
 ### Run a Function
 
-\`\`\`bash
+```bash
 leo run initialize_amm_market 123field 456field ...
-\`\`\`
+```
 
 ### Deploy to Aleo Testnet
 
