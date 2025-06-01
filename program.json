@@ -1,5 +1,5 @@
 {
-  "program": "prediction_market_paris_v5.aleo",
+  "program": "prediction_market_paris_vp.aleo",
   "version": "0.1.0",
   "description": "A private prediction market using zero-knowledge proofs",
   "license": "MIT",
@@ -13,3 +13,4 @@
   ],
   "dev_dependencies": null
 }
+ 

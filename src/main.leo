@@ -3,11 +3,12 @@
 // Système de prix dynamique inspiré de Polymarket avec intégration token_registry
 
 import token_registry.aleo;
-
-program prediction_market_paris_v5.aleo {
+ 
+program prediction_market_paris_vp.aleo {
     // Constants
     const CREATION_FEE: u64 = 3000000u64;
     const MIN_BET: u64 = 1000000u64; // 1 Aleo minimum
+    const MIN_LIQUIDITY: u64 = 1000000u64; // 1 Aleo minimum de liquidité
     const SECONDS_PER_DAY: u32 = 86400u32;
     const MAX_OPEN_MARKETS: u8 = 100u8;
     const MAX_SUPPLY: u128 = 1_000_000_000_000_000u128;
@@ -25,7 +26,7 @@ program prediction_market_paris_v5.aleo {
     const ADMIN: address = aleo12l0r3y89h30ts35d68mzf0ak35zepxw58gns2t4607a8a3jy65qs9gxuuj;
 
     struct Market {
-        id: field,
+        id: field,  
         creator: address,
         question: field,
         yes_token_id: field,
@@ -207,7 +208,18 @@ program prediction_market_paris_v5.aleo {
         Mapping::set(market_tokens, market_id, token_metadata);
         Mapping::set(trade_volume, market_id, 0u64);
 
-        // Gestion des frais d'administration
+        // Mint automatique pour le créateur du marché
+        let mint_amount: u128 = 100000u128; // Tu peux changer la quantité ici
+        let yes_key: field = BHP256::hash_to_field(caller as field + yes_token_id);
+        let no_key: field = BHP256::hash_to_field(caller as field + no_token_id);
+
+        let current_yes_balance: u128 = Mapping::get_or_use(token_holders, yes_key, 0u128);
+        let current_no_balance: u128 = Mapping::get_or_use(token_holders, no_key, 0u128);
+
+        Mapping::set(token_holders, yes_key, current_yes_balance + mint_amount);
+        Mapping::set(token_holders, no_key, current_no_balance + mint_amount);
+
+        //  Frais d'administration
         let current_fees: u64 = Mapping::get_or_use(admin_fees, ADMIN, 0u64);
         let updated_fees: u64 = current_fees + CREATION_FEE;
         Mapping::set(admin_fees, ADMIN, updated_fees);
@@ -221,57 +233,6 @@ program prediction_market_paris_v5.aleo {
             Mapping::set(market_count, true, new_count);
         }
     }
-
-    // Minter les tokens initiaux pour un marché (pour le créateur ou la liquidité)
-    async transition mint_market_tokens(
-        market_id: field,
-        amount: u128
-    ) -> (TokenMintReceipt, Future) {
-        assert(amount > 0u128);
-        assert(amount <= TOKEN_INITIAL_SUPPLY);
-
-        let mint_receipt: TokenMintReceipt = TokenMintReceipt {
-            owner: self.signer,
-            market_id: market_id,
-            yes_tokens_minted: amount,
-            no_tokens_minted: amount,
-            yes_token_id: 0field, // Sera rempli dans finalize
-            no_token_id: 0field,  // Sera rempli dans finalize
-        };
-
-        let future: Future = mint_market_tokens_finalize(market_id, amount, self.signer);
-        return (mint_receipt, future);
-    }
-
-    async function mint_market_tokens_finalize(
-        market_id: field,
-        amount: u128,
-        caller: address
-    ) {
-        // Vérifier que le marché existe et est ouvert
-        let market: Market = Mapping::get(markets, market_id);
-        assert(market.status == STATUS_OPEN);
-        
-        let token_metadata: MarketTokenMetadata = Mapping::get(market_tokens, market_id);
-        
-        // Note: Les appels à token_registry.aleo seraient ici
-        // token_registry.aleo/mint_tokens(token_metadata.yes_token_id, caller, amount);
-        // token_registry.aleo/mint_tokens(token_metadata.no_token_id, caller, amount);
-        
-        // Mettre à jour les balances (simulation)
-        let current_yes_balance: u128 = Mapping::get_or_use(token_holders, 
-            BHP256::hash_to_field(caller as field + token_metadata.yes_token_id), 0u128);
-        let current_no_balance: u128 = Mapping::get_or_use(token_holders, 
-            BHP256::hash_to_field(caller as field + token_metadata.no_token_id), 0u128);
-            
-        Mapping::set(token_holders, 
-            BHP256::hash_to_field(caller as field + token_metadata.yes_token_id), 
-            current_yes_balance + amount);
-        Mapping::set(token_holders, 
-            BHP256::hash_to_field(caller as field + token_metadata.no_token_id), 
-            current_no_balance + amount);
-    }
-
     // Acheter des tokens avec prix dynamique (intégrant les tokens automatiques)
     async transition buy_prediction_tokens(
         market_id: field,
@@ -280,6 +241,7 @@ program prediction_market_paris_v5.aleo {
         min_tokens_expected: u64, // Protection contre slippage
         nonce: field
     ) -> (BetRecord, Future) {
+        // Vérifications de base
         assert(aleo_amount >= MIN_BET);
         assert(chosen_option == 1u8 || chosen_option == 2u8);
 
@@ -312,41 +274,82 @@ program prediction_market_paris_v5.aleo {
         min_tokens_expected: u64,
         buyer: address
     ) {
+        // Vérifications de base
         let market: Market = Mapping::get(markets, market_id);
         let token_metadata: MarketTokenMetadata = Mapping::get(market_tokens, market_id);
         
         assert(market.status == STATUS_OPEN);
         assert(block.height < market.closing_block);
+        assert(market.yes_reserve > MIN_LIQUIDITY);
+        assert(market.no_reserve > MIN_LIQUIDITY);
+        assert(aleo_amount >= MIN_BET);
 
-        // Calculer les frais AMM
+        // Calcul des frais
         let fee_amount: u64 = (aleo_amount * AMM_FEE) / PRECISION;
         let net_amount: u64 = aleo_amount - fee_amount;
+        assert(net_amount > 0u64);
+        assert(net_amount >= MIN_BET / 2u64);
 
-        // Calculer selon la formule AMM x*y=k
+        // Calcul de k
         let k: u64 = market.yes_reserve * market.no_reserve;
-        
+        assert(k > 0u64);
+
+        // Vérification des dénominateurs pour éviter division par zéro
+        let denominator_yes: u64 = market.no_reserve + net_amount;
+        let denominator_no: u64 = market.yes_reserve + net_amount;
+        assert(denominator_yes > 0u64);
+        assert(denominator_no > 0u64);
+
+        // Calcul des nouvelles réserves avec vérifications
         let new_yes_reserve: u64 = chosen_option == 1u8 ? 
             market.yes_reserve + net_amount : 
-            k / (market.no_reserve + net_amount);
-            
+            k / denominator_yes;
         let new_no_reserve: u64 = chosen_option == 1u8 ? 
             k / new_yes_reserve : 
             market.no_reserve + net_amount;
-            
+
+        // Vérifications strictes des nouvelles réserves
+        assert(new_yes_reserve > MIN_LIQUIDITY);
+        assert(new_no_reserve > MIN_LIQUIDITY);
+        assert(new_yes_reserve > market.yes_reserve || new_no_reserve > market.no_reserve);
+
+        // Vérification que k reste constant
+        let k_after_trade: u64 = new_yes_reserve * new_no_reserve;
+        assert(k_after_trade >= k - PRECISION);
+        assert(k_after_trade <= k + PRECISION);
+
+        // Calcul des tokens à recevoir avec vérification
         let tokens_to_buy: u64 = chosen_option == 1u8 ? 
-            market.no_reserve - new_no_reserve : 
+            market.no_reserve - new_no_reserve :
             market.yes_reserve - new_yes_reserve;
-            
-        let current_price: u64 = net_amount * PRECISION / tokens_to_buy;
 
-        // Protection contre slippage
+        // Vérifications strictes du montant de tokens
+        assert(tokens_to_buy > 0u64);
         assert(tokens_to_buy >= min_tokens_expected);
+        assert(tokens_to_buy >= MIN_BET / 2u64); // Minimum de tokens à recevoir
 
-        // Déterminer quel token est acheté
+        // Vérification de k avec marge de sécurité
+        let new_k: u64 = new_yes_reserve * new_no_reserve;
+        assert(new_k >= k - PRECISION);
+        assert(new_k <= k + PRECISION);
+
+        // Vérification du prix effectif
+        let effective_price: u64 = (net_amount * PRECISION) / tokens_to_buy;
+        assert(effective_price > 0u64);
+        assert(effective_price <= PRECISION);
+
+        // Mise à jour des balances et du marché
         let purchased_token_id: field = chosen_option == 1u8 ? 
-            token_metadata.yes_token_id : token_metadata.no_token_id;
+            token_metadata.yes_token_id : 
+            token_metadata.no_token_id;
 
-        // Mettre à jour le marché
+        let balance_key: field = BHP256::hash_to_field(buyer as field + purchased_token_id);
+        let current_balance: u128 = Mapping::get_or_use(token_holders, balance_key, 0u128);
+        let new_balance: u128 = current_balance + (tokens_to_buy as u128);
+        assert(new_balance > current_balance);
+        Mapping::set(token_holders, balance_key, new_balance);
+
+        // Mise à jour du marché
         let updated_market: Market = Market {
             id: market.id,
             creator: market.creator,
@@ -359,27 +362,31 @@ program prediction_market_paris_v5.aleo {
             yes_reserve: new_yes_reserve,
             no_reserve: new_no_reserve,
             total_liquidity: market.total_liquidity + net_amount,
-            last_yes_price: chosen_option == 1u8 ? current_price : market.last_yes_price,
-            last_no_price: chosen_option == 2u8 ? current_price : market.last_no_price,
+            last_yes_price: chosen_option == 1u8 ? 
+                (new_yes_reserve * PRECISION) / (new_yes_reserve + new_no_reserve) : 
+                market.last_yes_price,
+            last_no_price: chosen_option == 2u8 ? 
+                (new_no_reserve * PRECISION) / (new_yes_reserve + new_no_reserve) : 
+                market.last_no_price,
             trade_count: market.trade_count + 1u32,
         };
 
         Mapping::set(markets, market_id, updated_market);
 
-        // Mettre à jour les balances de tokens
-        let balance_key: field = BHP256::hash_to_field(buyer as field + purchased_token_id);
-        let current_balance: u128 = Mapping::get_or_use(token_holders, balance_key, 0u128);
-        Mapping::set(token_holders, balance_key, current_balance + tokens_to_buy as u128);
-
-        // Mettre à jour le volume de trading
+        // Mise à jour du volume
         let current_volume: u64 = Mapping::get_or_use(trade_volume, market_id, 0u64);
-        Mapping::set(trade_volume, market_id, current_volume + aleo_amount);
+        let new_volume: u64 = current_volume + aleo_amount;
+        assert(new_volume > current_volume);
+        Mapping::set(trade_volume, market_id, new_volume);
 
-        // Ajouter les frais aux frais d'administration
+        // Mise à jour des frais admin
         let current_admin_fees: u64 = Mapping::get_or_use(admin_fees, ADMIN, 0u64);
-        Mapping::set(admin_fees, ADMIN, current_admin_fees + fee_amount);
+        let new_admin_fees: u64 = current_admin_fees + fee_amount;
+        assert(new_admin_fees > current_admin_fees);
+        Mapping::set(admin_fees, ADMIN, new_admin_fees);
     }
 
+   
     // Vendre des tokens prediction
     async transition sell_prediction_tokens(
         market_id: field,
@@ -388,6 +395,7 @@ program prediction_market_paris_v5.aleo {
         min_aleo_expected: u64,
         nonce: field
     ) -> (BetRecord, Future) {
+        // Vérifications de base
         assert(tokens_to_sell > 0u64);
         assert(chosen_option == 1u8 || chosen_option == 2u8);
 
@@ -420,45 +428,87 @@ program prediction_market_paris_v5.aleo {
         min_aleo_expected: u64,
         seller: address
     ) {
+        // Vérifications de base
         let market: Market = Mapping::get(markets, market_id);
         let token_metadata: MarketTokenMetadata = Mapping::get(market_tokens, market_id);
         
         assert(market.status == STATUS_OPEN);
         assert(block.height < market.closing_block);
+        assert(market.yes_reserve > MIN_LIQUIDITY);
+        assert(market.no_reserve > MIN_LIQUIDITY);
+        assert(tokens_to_sell >= MIN_BET / 2u64);
 
-        // Vérifier que le vendeur a assez de tokens
+        // Vérification que les tokens à vendre ne dépassent pas les réserves
+        assert(tokens_to_sell < market.yes_reserve);
+        assert(tokens_to_sell < market.no_reserve);
+
+        // Vérification du solde
         let sold_token_id: field = chosen_option == 1u8 ? 
-            token_metadata.yes_token_id : token_metadata.no_token_id;
+            token_metadata.yes_token_id : 
+            token_metadata.no_token_id;
         let balance_key: field = BHP256::hash_to_field(seller as field + sold_token_id);
         let current_balance: u128 = Mapping::get(token_holders, balance_key);
         assert(current_balance >= tokens_to_sell as u128);
+        assert(current_balance > 0u128);
 
-        // Calculer combien d'Aleo on récupère
+        // Calcul de k
         let k: u64 = market.yes_reserve * market.no_reserve;
-        
-        let new_yes_reserve: u64 = chosen_option == 1u8 ? 
-            k / (market.no_reserve + tokens_to_sell) :
-            market.yes_reserve + tokens_to_sell;
-            
-        let new_no_reserve: u64 = chosen_option == 1u8 ? 
-            market.no_reserve + tokens_to_sell :
-            k / new_yes_reserve;
-            
-        let aleo_received: u64 = chosen_option == 1u8 ? 
-            market.yes_reserve - new_yes_reserve :
-            market.no_reserve - new_no_reserve;
+        assert(k > 0u64);
 
-        // Appliquer les frais AMM
+        // Vérification des dénominateurs pour éviter division par zéro
+        let denominator_yes: u64 = market.yes_reserve - tokens_to_sell;
+        let denominator_no: u64 = market.no_reserve - tokens_to_sell;
+        assert(denominator_yes > MIN_LIQUIDITY);
+        assert(denominator_no > MIN_LIQUIDITY);
+
+        // Calcul des nouvelles réserves avec vérifications
+        let new_yes_reserve: u64 = chosen_option == 1u8 ? 
+            denominator_yes : 
+            k / denominator_no;
+        let new_no_reserve: u64 = chosen_option == 1u8 ? 
+            k / new_yes_reserve : 
+            denominator_no;
+
+        // Vérifications strictes des nouvelles réserves
+        assert(new_yes_reserve > MIN_LIQUIDITY);
+        assert(new_no_reserve > MIN_LIQUIDITY);
+        assert(new_yes_reserve < market.yes_reserve || new_no_reserve < market.no_reserve);
+
+        // Calcul de l'Aleo reçu avec vérification
+        let aleo_received: u64 = chosen_option == 1u8 ? 
+            new_no_reserve - market.no_reserve :
+            new_yes_reserve - market.yes_reserve;
+
+        // Vérifications strictes de l'Aleo reçu
+        assert(aleo_received > 0u64);
+        assert(aleo_received >= MIN_BET / 2u64); // Minimum d'Aleo à recevoir
+
+        // Application des frais avec vérification
         let fee_amount: u64 = (aleo_received * AMM_FEE) / PRECISION;
         let net_aleo_received: u64 = aleo_received - fee_amount;
+        assert(net_aleo_received > 0u64);
+        assert(net_aleo_received >= MIN_BET / 2u64); // Minimum après frais
 
-        // Protection contre slippage
+        // Vérification du slippage
         assert(net_aleo_received >= min_aleo_expected);
 
-        // Mettre à jour les balances
-        Mapping::set(token_holders, balance_key, current_balance - tokens_to_sell as u128);
+        // Vérification de k avec marge de sécurité
+        let new_k: u64 = new_yes_reserve * new_no_reserve;
+        assert(new_k >= k - PRECISION);
+        assert(new_k <= k + PRECISION);
 
-        // Mettre à jour le marché
+        // Vérification du prix effectif
+        let effective_price: u64 = (net_aleo_received * PRECISION) / tokens_to_sell;
+        assert(effective_price > 0u64);
+        assert(effective_price <= PRECISION);
+
+        // Mise à jour des balances avec vérification
+        let new_balance: u128 = current_balance - (tokens_to_sell as u128);
+        assert(new_balance < current_balance);
+        assert(new_balance >= 0u128);
+        Mapping::set(token_holders, balance_key, new_balance);
+
+        // Mise à jour du marché
         let updated_market: Market = Market {
             id: market.id,
             creator: market.creator,
@@ -471,16 +521,28 @@ program prediction_market_paris_v5.aleo {
             yes_reserve: new_yes_reserve,
             no_reserve: new_no_reserve,
             total_liquidity: market.total_liquidity,
-            last_yes_price: market.last_yes_price,
-            last_no_price: market.last_no_price,
+            last_yes_price: chosen_option == 1u8 ? 
+                (new_yes_reserve * PRECISION) / (new_yes_reserve + new_no_reserve) : 
+                market.last_yes_price,
+            last_no_price: chosen_option == 2u8 ? 
+                (new_no_reserve * PRECISION) / (new_yes_reserve + new_no_reserve) : 
+                market.last_no_price,
             trade_count: market.trade_count + 1u32,
         };
 
         Mapping::set(markets, market_id, updated_market);
 
-        // Ajouter les frais
+        // Mise à jour du volume avec vérification
+        let current_volume: u64 = Mapping::get_or_use(trade_volume, market_id, 0u64);
+        let new_volume: u64 = current_volume + net_aleo_received;
+        assert(new_volume > current_volume);
+        Mapping::set(trade_volume, market_id, new_volume);
+
+        // Mise à jour des frais admin avec vérification
         let current_admin_fees: u64 = Mapping::get_or_use(admin_fees, ADMIN, 0u64);
-        Mapping::set(admin_fees, ADMIN, current_admin_fees + fee_amount);
+        let new_admin_fees: u64 = current_admin_fees + fee_amount;
+        assert(new_admin_fees > current_admin_fees);
+        Mapping::set(admin_fees, ADMIN, new_admin_fees);
     }
 
     // Résoudre le marché et gérer les tokens
@@ -683,13 +745,61 @@ program prediction_market_paris_v5.aleo {
         Mapping::set(admin_fees, ADMIN, remaining_fees);
     }
 
-    // Lister les marchés ouverts
-    async transition list_open_markets() -> Future {
-        let future: Future = list_open_markets_finalize();
+        // Obtenir le nombre de marchés ouverts
+    async transition get_open_market_count() -> Future {
+        let future: Future = get_open_market_count_finalize();
         return future;
     }
 
-    async function list_open_markets_finalize() {
-        let market_count_value: u8 = Mapping::get_or_use(market_count, true, 0u8);
+    async function get_open_market_count_finalize() {
+        let count: u8 = Mapping::get_or_use(market_count, true, 0u8);
+    }
+
+    // Obtenir l'ID d'un marché à un index donné
+    async transition get_market_id_at_index(index: u8) -> Future {
+        let future: Future = get_market_id_at_index_finalize(index);
+        return future;
+    }
+
+    async function get_market_id_at_index_finalize(index: u8) {
+        let market_id: field = Mapping::get(open_markets, index);
+    }
+
+    // Obtenir les détails complets d'un marché
+    async transition get_market_details(market_id: field) -> Future {
+        let future: Future = get_market_details_finalize(market_id);
+        return future;
+    }
+
+    async function get_market_details_finalize(market_id: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        let token_metadata: MarketTokenMetadata = Mapping::get(market_tokens, market_id);
+        let volume: u64 = Mapping::get_or_use(trade_volume, market_id, 0u64);
+        
+        // Vérifier que le marché est ouvert et actif
+        assert(market.status == STATUS_OPEN);
+        assert(block.height < market.closing_block);
+    }
+
+    // Vérifier si un marché est encore actif
+    async transition is_market_still_active(market_id: field) -> Future {
+        let future: Future = is_market_still_active_finalize(market_id);
+        return future;
+    }
+
+    async function is_market_still_active_finalize(market_id: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        let is_active: bool = market.status == STATUS_OPEN && block.height < market.closing_block;
+    }
+
+    // Obtenir les prix actuels d'un marché
+    async transition get_current_prices(market_id: field) -> Future {
+        let future: Future = get_current_prices_finalize(market_id);
+        return future;
+    }
+
+    async function get_current_prices_finalize(market_id: field) {
+        let market: Market = Mapping::get(markets, market_id);
+        assert(market.status == STATUS_OPEN);
     }
 }
